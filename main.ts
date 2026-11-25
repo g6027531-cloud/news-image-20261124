@@ -1,38 +1,40 @@
-import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+// News-image entry: place the checked-in front page at /output/entry.png.
+//
+// The picture itself is rendered ahead of time (see render.py) and shipped
+// in this repository. This program only moves those exact bytes into the
+// output directory and proves the move with a hash comparison. It uses
+// only the Node standard library, touches no network, and yields identical
+// output on every run because the input bytes never change.
 
-// Copy the checked-in front-page image to the output path, then verify
-// the copy byte for byte. No network access. Deterministic.
-const here = dirname(fileURLToPath(import.meta.url));
-const source = join(here, "assets", "entry.png");
-const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
-const destination = join(outputDir, "entry.png");
+import { createHash as hash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-// The gate allows at most 1 MiB and at most 1024x1024 pixels; the
-// checked-in image is verified against the size cap here, and its
-// dimensions were verified when it was rendered (see render.py).
-const data = readFileSync(source);
-if (data.length > 1048576) {
-  throw new Error(`entry.png is ${data.length} bytes, over the 1 MiB limit`);
-}
-const sha256 = createHash("sha256").update(data).digest("hex");
+const IMAGE = new URL("./assets/entry.png", import.meta.url);
+const LIMIT = 1024 * 1024;
 
-mkdirSync(outputDir, { recursive: true });
-copyFileSync(source, destination);
-
-const written = readFileSync(destination);
-if (written.length !== data.length) {
+const bytes = readFileSync(IMAGE);
+if (bytes.length > LIMIT) {
   throw new Error(
-    `post-copy length mismatch: source ${data.length} bytes, output ${written.length} bytes`,
-  );
-}
-const writtenSha256 = createHash("sha256").update(written).digest("hex");
-if (writtenSha256 !== sha256) {
-  throw new Error(
-    `post-copy sha256 mismatch: source ${sha256}, output ${writtenSha256}`,
+    `checked-in entry.png is ${bytes.length} bytes, over the ${LIMIT} byte limit`,
   );
 }
 
-console.log(`wrote ${destination} (${written.length} bytes, sha256 ${sha256})`);
+const digest = hash("sha256").update(bytes).digest("hex");
+const targetDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+const target = join(targetDir, "entry.png");
+
+mkdirSync(targetDir, { recursive: true });
+writeFileSync(target, bytes);
+
+const back = readFileSync(target);
+if (!back.equals(bytes)) {
+  throw new Error("output bytes differ from the checked-in image");
+}
+if (hash("sha256").update(back).digest("hex") !== digest) {
+  throw new Error("output hash differs from the checked-in image");
+}
+
+console.log(
+  `entry.png written to ${target}: ${bytes.length} bytes, sha256 ${digest}`,
+);
